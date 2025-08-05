@@ -4,10 +4,10 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
-#include <mutex> // For protecting discovered_services
-#include <cstring> // For memset
+#include <mutex>
+#include <cstring>
 #include <ifaddrs.h>
-#include "mdns.h"  // The single-file mDNS library
+#include "mdns.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
