@@ -1,12 +1,14 @@
 from zeroconf import Zeroconf, ServiceBrowser, ServiceListener
 
-SERVICE_TYPE = "_http._tcp.local."
+SERVICE_TYPE = "_lumo-lidar._tcp.local."
 
 class Listener(ServiceListener):
     def add_service(self, zc, type_, name):
         print(f"Service discovered: {name}")
         info = zc.get_service_info(type_, name)
         if info:
+            for addr in info.parsed_addresses():
+                print(f"  Address: {addr}:{info.port}")
             print("  Properties:")
             for k, v in info.properties.items():
                 print(f"    {k.decode() if isinstance(k, bytes) else k}: {v.decode() if isinstance(v, bytes) else v}")
