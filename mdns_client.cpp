@@ -6,31 +6,27 @@
 #include <atomic>
 #include <mutex>
 #include <cstring>
+#include <map>
 #include <ifaddrs.h>
 #include "mdns.h"
 
-#ifdef _WIN32
-#include <winsock2.h>
-#pragma comment(lib, "ws2_32.lib")
-#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h> // For inet_ntoa
 #include <unistd.h>    // For close
-#endif
 
-// Define a struct to hold the service information
-struct DiscoveredService {
-    std::string name;
-    std::string type;
-    std::string host_name;
-    std::string address;
-    int port;
+// Struct to hold all info for a service instance
+struct ServiceInfo {
+    std::string instance_name; // e.g. lumo-abx000420._lumo-lidar._tcp.local.
+    std::string host_name;     // e.g. lumo-abx000420.local.
+    std::string address;       // IP address
+    int port = 0;
     std::vector<std::pair<std::string, std::string>> txt_records;
+    bool has_ptr = false, has_srv = false, has_a = false, has_txt = false;
 };
 
-// Global variables for discovered services and a mutex to protect access
-static std::vector<DiscoveredService> discovered_services;
+// Map from instance name to ServiceInfo
+static std::map<std::string, ServiceInfo> services;
 static std::mutex services_mutex;
 static std::atomic<bool> discovery_running(false);
 
@@ -52,27 +48,43 @@ static int query_callback(int sock, const struct sockaddr* from, size_t addrlen,
                          size_t record_length, void* user_data) {
     char name_buffer[256];
     mdns_string_t name = mdns_string_extract(data, size, &name_offset, name_buffer, sizeof(name_buffer));
+    std::lock_guard<std::mutex> lock(services_mutex);
     if (rtype == MDNS_RECORDTYPE_PTR) {
         char ptr_buffer[256];
         mdns_string_t ptr = mdns_record_parse_ptr(data, size, record_offset, record_length, ptr_buffer, sizeof(ptr_buffer));
-        std::cout << "Found PTR: " << std::string(ptr.str, ptr.length) << std::endl;
+        std::string instance(ptr.str, ptr.length);
+        services[instance].instance_name = instance;
+        services[instance].has_ptr = true;
+        std::cout << "Found PTR: " << instance << std::endl;
     } else if (rtype == MDNS_RECORDTYPE_SRV) {
         char srv_buffer[256];
         mdns_record_srv_t srv = mdns_record_parse_srv(data, size, record_offset, record_length, srv_buffer, sizeof(srv_buffer));
-        std::cout << "SRV: " << std::string(srv.name.str, srv.name.length) << ", port: " << srv.port << std::endl;
+        std::string instance(name.str, name.length);
+        std::string host(srv.name.str, srv.name.length);
+        services[instance].host_name = host;
+        services[instance].port = srv.port;
+        services[instance].has_srv = true;
+        std::cout << "SRV: " << host << ", port: " << srv.port << std::endl;
     } else if (rtype == MDNS_RECORDTYPE_A) {
         struct sockaddr_in addr;
         mdns_record_parse_a(data, size, record_offset, record_length, &addr);
         char ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
+        std::string instance(name.str, name.length);
+        services[instance].address = ip;
+        services[instance].has_a = true;
         std::cout << "A: " << ip << std::endl;
     } else if (rtype == MDNS_RECORDTYPE_TXT) {
         mdns_record_txt_t txt_records[8];
         size_t txt_count = mdns_record_parse_txt(data, size, record_offset, record_length, txt_records, 8);
+        std::string instance(name.str, name.length);
         for (size_t i = 0; i < txt_count; ++i) {
-            std::cout << "TXT: " << std::string(txt_records[i].key.str, txt_records[i].key.length)
-                      << " = " << std::string(txt_records[i].value.str, txt_records[i].value.length) << std::endl;
+            std::string key(txt_records[i].key.str, txt_records[i].key.length);
+            std::string value(txt_records[i].value.str, txt_records[i].value.length);
+            services[instance].txt_records.emplace_back(key, value);
+            std::cout << "TXT: " << key << " = " << value << std::endl;
         }
+        services[instance].has_txt = true;
     }
     return 0;
 }
@@ -111,15 +123,7 @@ void discovery_loop(const std::string& service_type, int timeout_ms) {
 }
 
 int main() {
-#ifdef _WIN32
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        std::cerr << "WSAStartup failed." << std::endl;
-        return 1;
-    }
-#endif
-
-    std::string service_to_find = "_http._tcp.local.";
+    std::string service_to_find = "_lumo-lidar._tcp.local.";
     int discovery_timeout_ms = 10000; // Discover for 10 seconds
 
     discovery_running = true;
@@ -129,27 +133,25 @@ int main() {
 
     std::cout << "\n--- Discovered Services ---" << std::endl;
     std::lock_guard<std::mutex> lock(services_mutex);
-    if (discovered_services.empty()) {
-        std::cout << "No services of type '" << service_to_find << "' found." << std::endl;
-    } else {
-        for (const auto& service : discovered_services) {
-            std::cout << "  Name: " << service.name << std::endl;
-            std::cout << "  Type: " << service.type << std::endl;
-            std::cout << "  Host: " << service.host_name << std::endl;
-            std::cout << "  Address: " << service.address << std::endl;
-            std::cout << "  Port: " << service.port << std::endl;
-            if (!service.txt_records.empty()) {
+    bool found = false;
+    for (const auto& [name, info] : services) {
+        if (info.has_ptr && info.has_srv && info.has_a) {
+            found = true;
+            std::cout << "  Instance: " << info.instance_name << std::endl;
+            std::cout << "  Host: " << info.host_name << std::endl;
+            std::cout << "  Address: " << info.address << std::endl;
+            std::cout << "  Port: " << info.port << std::endl;
+            if (!info.txt_records.empty()) {
                 std::cout << "  TXT Records:" << std::endl;
-                for (const auto& txt : service.txt_records) {
+                for (const auto& txt : info.txt_records) {
                     std::cout << "    - " << txt.first << " = " << txt.second << std::endl;
                 }
             }
             std::cout << "--------------------------" << std::endl;
         }
     }
-
-#ifdef _WIN32
-    WSACleanup();
-#endif
+    if (!found) {
+        std::cout << "No complete services of type '" << service_to_find << "' found." << std::endl;
+    }
     return 0;
 }
