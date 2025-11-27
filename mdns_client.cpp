@@ -36,28 +36,16 @@ int main() {
             std::cout << "  Instance: " << info.instance_name << std::endl;
             std::cout << "  Host: " << info.host_name << std::endl;
             if (!info.addresses.empty()) {
-                std::set<std::string> unique_addrs;
+                std::cout << "  Addresses:" << std::endl;
                 for (const auto& addr : info.addresses) {
-                    if (!addr.empty()) unique_addrs.insert(addr);
-                }
-                if (!unique_addrs.empty()) {
-                    std::cout << "  Addresses:" << std::endl;
-                    for (const auto& addr : unique_addrs) {
-                        std::cout << "    - " << addr << std::endl;
-                    }
+                    std::cout << "    - " << addr << std::endl;
                 }
             }
             std::cout << "  Port: " << info.port << std::endl;
             if (!info.txt_records.empty()) {
-                std::set<std::pair<std::string, std::string>> unique_txts;
+                std::cout << "  TXT Records:" << std::endl;
                 for (const auto& txt : info.txt_records) {
-                    if (!txt.first.empty()) unique_txts.insert(txt);
-                }
-                if (!unique_txts.empty()) {
-                    std::cout << "  TXT Records:" << std::endl;
-                    for (const auto& txt : unique_txts) {
-                        std::cout << "    - " << txt.first << " = " << txt.second << std::endl;
-                    }
+                    std::cout << "    - " << txt.first << " = " << txt.second << std::endl;
                 }
             }
             std::cout << "--------------------------" << std::endl;
